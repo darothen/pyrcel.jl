@@ -15,8 +15,8 @@ using Sundials
 ## Base model constants 
 V = 0.44
 T0 = 283.15
-# S0 = -0.05
-S0 = -0.001
+S0 = -0.05
+# S0 = -0.001
 P0 = 85000.0
 
 ## Create an initial aerosol distribution
@@ -93,9 +93,12 @@ end
 wc0 = sum(water_vol.(r0s, r_drys, Nis)) / rho_air(T0, P0, 0.0)
 wi0 = 0.0
 
+@printf "Initial Conditions\n"
+@printf "------------------\n"
+@printf "%9.1f %9.2f %9.1e %9.1e %9.1e %9.3f\n" P0/100. T0 wv0*1e3 wc0*1e3 wi0*1e3 S0
+
 ## Set up ODE solver
-z0 = 0.0
-y0 = [z0, P0, T0, wv0, wc0, wi0, S0]
+y0 = [P0, T0, wv0, S0]
 append!(y0, r0s)
 accom = 1.0
 params = [r_drys, Nis, V, κ_aer, accom]
@@ -139,14 +142,14 @@ end
 # end
 
 function pm_parcel_odes!(du,u,p,t)
-  z, P, T, wv, wc, wi, S = u[1:7]
-  rs = u[8:end]
+  P, T, wv, S = u[1:4]
+  rs = u[5:end]
   r_drys, Nis, V, κ, accom = p
 
   # Compute air densities from current state
   T_c = T - 273.15
   pv_sat = es(T_c)
-  wv_sat = wv / (S + 1.0)
+  # wv_sat = wv / (S + 1.0)
   Tv = (1.0 + 0.61 * wv) * T
   e_wv = (1.0 + S) * pv_sat # water vapor pressure
   ρ_air = P / c.Rd / Tv
@@ -183,12 +186,10 @@ function pm_parcel_odes!(du,u,p,t)
   end
   dwc_dt *= (4*π * c.rho_w / ρ_air_dry)
   # dwc_dt = sum(Nis.*(rs.^2).*drs_dt) * 4*π * c.rho_w / ρ_air_dry
-  dwi_dt = 0.
 
-  dwv_dt = -1. * (dwc_dt + dwi_dt)
+  dwv_dt = -1. * dwc_dt
 
   dT_dt = -c.g * V / c.Cp - c.L * dwv_dt / c.Cp
-  dz_dt = V
 
   # α = (c.g * c.Mw * c.L) / (c.Cp * c.R * atm.T^2)
   # α -= (c.g * c.Ma) / (c.R * atm.T)
@@ -200,55 +201,49 @@ function pm_parcel_odes!(du,u,p,t)
   γ += (c.Mw * c.L * c.L) / (c.Cp * c.R * T * T)
   dS_dt = (α * V) - (γ * dwc_dt)
 
-  du[1] = dz_dt
-  du[2] = dP_dt
-  du[3] = dT_dt
-  du[4] = dwv_dt
-  du[5] = dwc_dt
-  du[6] = dwi_dt
-  du[7] = dS_dt
-  du[8:end] = drs_dt
+  du[1] = dP_dt
+  du[2] = dT_dt
+  du[3] = dwv_dt
+  du[4] = dS_dt
+  du[5:end] = drs_dt
 
 end
 
 ## Solver setup
-# tspan = (0.0,250)
-tspan = (0.0, 10)
-prob = ODEProblem(pm_parcel_odes!,y0,tspan,params)
-output_dt = 0.5
-solver_dt = 1.0
-n_out = convert(Integer, solver_dt / output_dt)
-u = y0
-p = params
-
-@printf "Initial Conditions\n"
-@printf "------------------\n"
-@printf "%9.1f %9.2f %9.1e %9.1e %9.1e %9.3f\n" P0/100. T0 wv0*1e3 wc0*1e3 wi0*1e3 S0
-
-state_atol = [1e-4, 1e-4, 1e-4, 1e-10, 1e-10, 1e-4, 1e-8]
+# state_atol = [1e-4, 1e-4, 1e-10, 1e-8]
+state_atol = [1e-4, 1e-4, 1e-10, 1e-8]
 append!(state_atol, 1e-12*ones(length(rs)))
 state_rtol = 1e-7
+
+tspan = (0.0, 350)
+output_dt = 1.0
+solver_dt = 0.5
+# n_out = convert(Integer, solver_dt / output_dt)
+
+prob = ODEProblem(pm_parcel_odes!,y0,tspan,params)
+u = y0
+p = params
 
 ## One-shot solve
 sol = solve(
     prob, 
     # radau(),
-    # RK4(),
+    # KenCarp4(),
     CVODE_BDF(
         method=:Newton,
         max_order=5,
-    ), 
+    ),  
     reltol=state_rtol,
     abstol=state_atol,
     # dt=solver_dt,
     # tstops=output_dt,
     tstops=tspan[1]:solver_dt:tspan[2],
-    saveat=tspan[1]:solver_dt:tspan[2],
+    saveat=tspan[1]:output_dt:tspan[2],
     # saveat=output_dt,
     # adaptive=false,
 )
-# plot(sol.t, sol[7,:])
-println(maximum(sol[7,:]))
+# plot(sol.t, sol[4,:])
+println(maximum(sol[4,:]))
 
 ## Integrator solve
 integrator = init(
