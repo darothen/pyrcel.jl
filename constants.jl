@@ -17,7 +17,7 @@ const epsilon = 0.622      #: molecular weight of water / molecular weight of dr
 
 # Additional fixed model parameters
 const N_STATE_VARS = 7
-const STATE_VARS = ["z", "P", "T", "wv", "wc", "wi", "S"]
-const STATE_VAR_MAP = {var: i for i, var in enumerate(STATE_VARS)}
+# const STATE_VARS = ["z", "P", "T", "wv", "wc", "wi", "S"]
+# const STATE_VAR_MAP = {var: i for i, var in enumerate(STATE_VARS)}
 
 end # module constants
