@@ -7,7 +7,7 @@ using Optim
 using Plots
 using Printf
 using Roots
-# using StaticArrays
+# using StaticArrays  ## DON'T USE THIS.
 using Sundials
 
 # Stand-alone run.
@@ -15,8 +15,8 @@ using Sundials
 ## Base model constants 
 V = 0.44
 T0 = 283.15
-S0 = -0.05
-# S0 = -0.001
+# S0 = -0.05
+S0 = -0.001
 P0 = 85000.0
 
 ## Create an initial aerosol distribution
@@ -148,7 +148,8 @@ function pm_parcel_odes!(du,u,p,t)
 
   # Compute air densities from current state
   T_c = T - 273.15
-  pv_sat = es(T_c)
+  # pv_sat = es(T_c)
+  pv_sat = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
   # wv_sat = wv / (S + 1.0)
   Tv = (1.0 + 0.61 * wv) * T
   e_wv = (1.0 + S) * pv_sat # water vapor pressure
@@ -162,26 +163,40 @@ function pm_parcel_odes!(du,u,p,t)
   dP_dt = -1.0 * ρ_air * c.g * V
   # drs_dt = dr_dt.(rs, r_drys, κ, fill(atm, length(rs)), accom)
   # drs_dt = Array{Float64,1}(undef, length(rs))
-  drs_dt = zeros(length(rs))
+  # drs_dt = zeros(Num, length(rs))
   dwc_dt = 0.
   for i = 1:length(rs)
     r = rs[i]
     r_dry = r_drys[i]
     Ni = Nis[i] 
 
-    dv_r = dv(T, r, P, accom)
-    ka_r = ka(T, r, ρ_air)
+    # ka_r = ka(T, r, ρ_air)
+    ka_cont = 1e-3 * (4.39 + 0.071*T)
+    denom = 1.0 + (ka_cont / c.at / r / ρ_air / c.Cp) * sqrt(2*π*c.Ma/c.R/T)
+    ka_r =  ka_cont / denom
+
+    # dv_r = dv(T, r, P, accom)
+    P_atm = P * 1.01325e-5
+    dv_cont = 1e-4 * (0.211 / P_atm) * ((T / 273.0)^1.94)
+    denom = 1.0 + (dv_cont / accom / r) * sqrt(2*π*c.Mw/c.R/T)
+    dv_r = dv_cont / denom
 
     G_a = (c.rho_w * c.R * T) / (pv_sat * dv_r * c.Mw)
     G_b = (c.L * c.rho_w * ((c.L * c.Mw / (c.R * T)) - 1.0)) / (ka_r * T)
     G = 1.0 / (G_a + G_b)
 
-    Seq_r = Seq(r, r_dry, T, κ)
+    # Seq_r = Seq(r, r_dry, T, κ)
+    σ_w = 0.0761 - 1.55e-4 * (T - 273.15)
+    A = 2. * c.Mw * σ_w / c.R / T / c.rho_w / r
+    B = (r^3 - r_dry^3) / (r^3 - (r_dry^3 * (1.0 - κ)))
+    Seq_r = exp(A) * B - 1.0
+
     dS = S - Seq_r
 
     dr_dt = (G / r) * dS
     dwc_dt += Ni * r * r * dr_dt
-    drs_dt[i] = dr_dt
+    # drs_dt[i] = dr_dt
+    du[4+i] = dr_dt
 
   end
   dwc_dt *= (4*π * c.rho_w / ρ_air_dry)
@@ -205,7 +220,7 @@ function pm_parcel_odes!(du,u,p,t)
   du[2] = dT_dt
   du[3] = dwv_dt
   du[4] = dS_dt
-  du[5:end] = drs_dt
+  # du[5:end] = drs_dt
 
 end
 
@@ -215,9 +230,9 @@ state_atol = [1e-4, 1e-4, 1e-10, 1e-8]
 append!(state_atol, 1e-12*ones(length(rs)))
 state_rtol = 1e-7
 
-tspan = (0.0, 350)
-output_dt = 1.0
-solver_dt = 0.5
+tspan = (0.0, 280)
+output_dt = 0.5
+solver_dt = 0.1
 # n_out = convert(Integer, solver_dt / output_dt)
 
 prob = ODEProblem(pm_parcel_odes!,y0,tspan,params)
@@ -227,8 +242,8 @@ p = params
 ## One-shot solve
 sol = solve(
     prob, 
-    # radau(),
-    # KenCarp4(),
+    # Rodas4P(),
+    # ABDF2(),
     CVODE_BDF(
         method=:Newton,
         max_order=5,
