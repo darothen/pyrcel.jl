@@ -15,8 +15,8 @@ using Sundials
 ## Base model constants 
 V = 0.44
 T0 = 283.15
-# S0 = -0.05
-S0 = -0.001
+S0 = -0.05
+# S0 = -0.001
 P0 = 85000.0
 
 ## Create an initial aerosol distribution
@@ -36,8 +36,8 @@ mids = sqrt.(rs[1:end-1] .* rs[2:end])
 r_drys = mids * 1e-6
 
 function pdf(x::Float64)::Float64
-    scaling = N_aer / sqrt(2*π) / log10(σ_aer)
-    exponent = log10(x / μ_aer)^2 / 2 / log10(σ_aer)^2
+    scaling = N_aer / sqrt(2*π) / log(σ_aer)
+    exponent = log(x / μ_aer)^2 / 2 / log(σ_aer)^2
     return (scaling / x) * exp(-exponent)
 end
 rsl = rs[1:end-1]
@@ -93,7 +93,12 @@ end
 wc0 = sum(water_vol.(r0s, r_drys, Nis)) / rho_air(T0, P0, 0.0)
 wi0 = 0.0
 
-@printf "Initial Conditions\n"
+@printf "AEROSOL DISTRIBUTION\n"
+for i = 1:length(r_drys)
+    @printf "%3.2e %8.1f\n" r_drys[i] Nis[i]
+end
+
+@printf "\nInitial Conditions\n"
 @printf "------------------\n"
 @printf "%9.1f %9.2f %9.1e %9.1e %9.1e %9.3f\n" P0/100. T0 wv0*1e3 wc0*1e3 wi0*1e3 S0
 
@@ -231,8 +236,8 @@ append!(state_atol, 1e-12*ones(length(rs)))
 state_rtol = 1e-7
 
 tspan = (0.0, 280)
-output_dt = 0.5
-solver_dt = 0.1
+output_dt = 1.0
+solver_dt = 0.5
 # n_out = convert(Integer, solver_dt / output_dt)
 
 prob = ODEProblem(pm_parcel_odes!,y0,tspan,params)
