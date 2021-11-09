@@ -128,23 +128,23 @@ struct atm_state
     S
 end
 
-# function dr_dt(r, r_dry, κ, atm, accom=accom)
-#     dv_r = dv(atm.T, r, atm.P, accom)
-#     ka_r = ka(atm.T, r, atm.ρ_air)
+function calc_dr_dt(r, r_dry, κ, atm, accom=accom)
+    dv_r = dv(atm.T, r, atm.P, accom)
+    ka_r = ka(atm.T, r, atm.ρ_air)
 
-#     T_c = atm.T - 273.15
-#     pv_sat = es(T_c)
+    T_c = atm.T - 273.15
+    pv_sat = es(T_c)
 
-#     G_a = (c.rho_w * c.R * atm.T) / (pv_sat * dv_r * c.Mw)
-#     G_b = (c.L * c.rho_w * ((c.L * c.Mw / (c.R * atm.T)) - 1.0)) / (ka_r * atm.T)
-#     G = 1.0 / (G_a + G_b)
+    G_a = (c.rho_w * c.R * atm.T) / (pv_sat * dv_r * c.Mw)
+    G_b = (c.L * c.rho_w * ((c.L * c.Mw / (c.R * atm.T)) - 1.0)) / (ka_r * atm.T)
+    G = 1.0 / (G_a + G_b)
 
-#     Seq_r = Seq(r, r_dry, atm.T, κ)
-#     dS = atm.S - Seq_r
+    Seq_r = Seq(r, r_dry, atm.T, κ)
+    dS = atm.S - Seq_r
 
-#     dr_dt = (G / r) * dS
-#     return dr_dt
-# end
+    dr_dt = (G / r) * dS
+    return dr_dt
+end
 
 function pm_parcel_odes!(du,u,p,t)
   P, T, wv, S = u[1:4]
@@ -153,52 +153,40 @@ function pm_parcel_odes!(du,u,p,t)
 
   # Compute air densities from current state
   T_c = T - 273.15
-  # pv_sat = es(T_c)
-  pv_sat = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
-  # wv_sat = wv / (S + 1.0)
+  pv_sat = es(T_c)
+  wv_sat = wv / (S + 1.0)
   Tv = (1.0 + 0.61 * wv) * T
   e_wv = (1.0 + S) * pv_sat # water vapor pressure
   ρ_air = P / c.Rd / Tv
   ρ_air_dry = (P - e_wv) / c.Rd / T
 
   # Save state
-  # atm = atm_state(T, P, ρ_air, wv, S)
+  atm = atm_state(T, P, ρ_air, wv, S)
 
   # Tendencies
   dP_dt = -1.0 * ρ_air * c.g * V
-  # drs_dt = dr_dt.(rs, r_drys, κ, fill(atm, length(rs)), accom)
-  # drs_dt = Array{Float64,1}(undef, length(rs))
-  # drs_dt = zeros(Num, length(rs))
   dwc_dt = 0.
   for i = 1:length(rs)
     r = rs[i]
     r_dry = r_drys[i]
     Ni = Nis[i] 
 
+    ## Calc dr/dt here
     # ka_r = ka(T, r, ρ_air)
-    ka_cont = 1e-3 * (4.39 + 0.071*T)
-    denom = 1.0 + (ka_cont / c.at / r / ρ_air / c.Cp) * sqrt(2*π*c.Ma/c.R/T)
-    ka_r =  ka_cont / denom
-
     # dv_r = dv(T, r, P, accom)
-    P_atm = P * 1.01325e-5
-    dv_cont = 1e-4 * (0.211 / P_atm) * ((T / 273.0)^1.94)
-    denom = 1.0 + (dv_cont / accom / r) * sqrt(2*π*c.Mw/c.R/T)
-    dv_r = dv_cont / denom
 
-    G_a = (c.rho_w * c.R * T) / (pv_sat * dv_r * c.Mw)
-    G_b = (c.L * c.rho_w * ((c.L * c.Mw / (c.R * T)) - 1.0)) / (ka_r * T)
-    G = 1.0 / (G_a + G_b)
+    # G_a = (c.rho_w * c.R * T) / (pv_sat * dv_r * c.Mw)
+    # G_b = (c.L * c.rho_w * ((c.L * c.Mw / (c.R * T)) - 1.0)) / (ka_r * T)
+    # G = 1.0 / (G_a + G_b)s
 
     # Seq_r = Seq(r, r_dry, T, κ)
-    σ_w = 0.0761 - 1.55e-4 * (T - 273.15)
-    A = 2. * c.Mw * σ_w / c.R / T / c.rho_w / r
-    B = (r^3 - r_dry^3) / (r^3 - (r_dry^3 * (1.0 - κ)))
-    Seq_r = exp(A) * B - 1.0
+    # dS = S - Seq_r
 
-    dS = S - Seq_r
+    # dr_dt = (G / r) * dS
 
-    dr_dt = (G / r) * dS
+    ## Calc dr/dt in function
+    dr_dt = calc_dr_dt(r, r_dry, κ, atm, accom)
+
     dwc_dt += Ni * r * r * dr_dt
     # drs_dt[i] = dr_dt
     du[4+i] = dr_dt
@@ -245,22 +233,30 @@ u = y0
 p = params
 
 ## One-shot solve
-sol = solve(
+@time sol = solve(
     prob, 
-    # Rodas4P(),
-    # ABDF2(),
-    CVODE_BDF(
-        method=:Newton,
-        max_order=5,
-    ),  
+
+    ## SOLVER
+    # Rodas4P(), # ~29 seconds
+    # Rodas5(), # ~40 seconds on reference problem
+    # CVODE_BDF( # ~5 seconds on reference problem
+    #     method=:Newton,
+    #     max_order=5,
+    # ),  
+    # RadauIIA3(), # ~14 seconds but incorrect solution
+    # Rosenbrock23(), # >60 seconds
+    # Kvaerno5(), # ~13 seconds
+    # KenCarp4(), # ~9 seconds
+    # QNDF(), # ~12 seconds
+    # QNDF1(), # ~26 seconds
+    QBDF(), # ~4-8 seconds - much faster on second run
+
+    ## USE THESE SETTINGS
     reltol=state_rtol,
     abstol=state_atol,
     # dt=solver_dt,
-    # tstops=output_dt,
     tstops=tspan[1]:solver_dt:tspan[2],
     saveat=tspan[1]:output_dt:tspan[2],
-    # saveat=output_dt,
-    # adaptive=false,
 )
 # plot(sol.t, sol[4,:])
 println(maximum(sol[4,:]))
