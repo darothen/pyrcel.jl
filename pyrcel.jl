@@ -3,6 +3,7 @@ include("constants.jl")
 c = constants
 include("thermo.jl")
 
+using CPUTime
 using DifferentialEquations
 using Plots
 using Printf
@@ -189,6 +190,9 @@ prob = ODEProblem(pm_parcel_odes!,y0,tspan,params)
 u = y0
 p = params
 
+# Warm up ODE RHS
+pm_parcel_odes!(zeros(length(y0)), y0, params, 0.)
+
 ## One-shot solve
 @time sol = solve(
     prob, 
@@ -221,19 +225,42 @@ println(maximum(sol[4,:]))
 ## Integrator solve
 integrator = init(
     prob, 
-    # QNDF(),
-    CVODE_BDF(
-        method=:Newton,
-        max_order=5,
-    ), 
+    QNDF();
+    # CVODE_BDF( # ~5 seconds on reference problem
+    #     method=:Newton,
+    #     max_order=5,
+    # );  
+    dt=output_dt,
     reltol=state_rtol,
     abstol=state_atol,
-    tstops=output_dt,
-    saveat=output_dt,
+    tstops=tspan[1]:solver_dt:tspan[2],
+    saveat=tspan[1]:output_dt:tspan[2],
 )
 
+# step!(integrator, output_dt, true)
+
+@printf "Integration Control\n"
+@printf "-------------------\n"
+@printf "output_dt: %1.2f\n" output_dt
+@printf "solver_dt: %1.2f\n" solver_dt
+@printf "\nBEGIN INTEGRATION ->\n\n"
+@printf "Integration Loop\n\n"
+@printf "  step     time  walltime  Δwalltime |      z       T       S\n"
+@printf " ------------------------------------|-----------------------\n"
+
 ts = tspan[1]:output_dt:tspan[2]
-# for (u, t) in TimeChoiceIterator(integrator)
-for (u, t) in tuples(integrator)
-    @show u[1:7], t
+# ts = 0:1:10
+step = 0
+elapsed_time = 0.
+CPUtic()
+for (u, t) in TimeChoiceIterator(integrator, ts)
+    Δt = CPUtoq()
+    elapsed_time += Δt
+    step += 1
+    T = u[2]
+    S = u[4]
+    z = V * t
+    @printf "%6d %7.2fs %8.2fs %9.2fs | %5.1fm %7.2f %6.2f%% \n" step t elapsed_time Δt z T S*100.
+    CPUtic()
 end
+_ = CPUtoq()
