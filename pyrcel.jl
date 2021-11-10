@@ -1,9 +1,9 @@
 ## Imports
 include("constants.jl")
 c = constants
+include("thermo.jl")
 
 using DifferentialEquations
-using Optim
 using Plots
 using Printf
 using Roots
@@ -16,7 +16,6 @@ using Sundials
 V = 0.44
 T0 = 283.15
 S0 = -0.05
-# S0 = -0.001
 P0 = 85000.0
 
 ## Create an initial aerosol distribution
@@ -24,7 +23,7 @@ P0 = 85000.0
 N_aer = 1000.0
 σ_aer = 1.2
 κ_aer = 0.54
-n_bins = 250
+n_bins = 251
 
 ## Initialize aerosol size distribution
 lr = log(μ_aer / 10. / σ_aer)
@@ -35,7 +34,7 @@ rs = base.^(range(lr, stop=rr, length=n_bins))
 mids = sqrt.(rs[1:end-1] .* rs[2:end])
 r_drys = mids * 1e-6
 
-function pdf(x::Float64)::Float64
+function pdf(x)
     scaling = N_aer / sqrt(2*π) / log(σ_aer)
     exponent = log(x / μ_aer)^2 / 2 / log(σ_aer)^2
     return (scaling / x) * exp(-exponent)
@@ -51,29 +50,13 @@ wv0 = (S0 + 1.0) * (
     c.epsilon * es(T0 - 273.15) / (P0 - es(T0 - 273.15))
 )
 # Find equilibrium wet particle radius
-σ_w(T) = 0.0761 - 1.55e-4 * (T - 273.15)
-function Seq(r, r_dry, T, κ)
-    A = 2. * c.Mw * σ_w(T) / c.R / T / c.rho_w / r
-    B = (r^3 - r_dry^3) / (r^3 - (r_dry^3 * (1.0 - κ)))
-    return exp(A) * B - 1.0
-end
-function kohler_crit(T::Float64, r_dry::Float64, κ::Float64)
-    neg_Seq(r) = -1.0 * Seq(r, r_dry, T, κ)
-    res = optimize(
-        neg_Seq, r_dry, r_dry*1e4, Optim.Brent()
-    )
-    r_crit = Optim.minimizer(res)
-    s_crit = Optim.minimum(res) * -1.0
-    return r_crit, s_crit
-end
 r0s = []
 # NOTE: κ is constant here so we don't need the zipped iteration
 for r_dry in reverse(r_drys)
     f(r) = Seq(r, r_dry, T0, κ_aer) - S0
     r_b, _ = kohler_crit(T0, r_dry, κ_aer)
     r_a = r_dry
-    # @printf "r_b = %g\n" r_b
-    r0 = find_zero(f, (r_a, r_b), )
+    r0 = Roots.find_zero(f, (r_a, r_b), )
     # @printf "%g | %g | %g | %g \n" r_a r_dry r0 r_b
     # @printf "(%g %g) | (%g %g) | (%g %g)\n" r_a f(r_a) r0 f(r0) r_b f(r_b)
     append!(r0s, r0)
@@ -81,16 +64,9 @@ end
 r0s = collect(reverse(r0s))
 
 ## Total water volume
-function water_vol(r0::Float64, r_dry::Float64, Ni::Float64)::Float64
-    return (4*π/3.0) * c.rho_w * Ni * (r0^3 - r_dry^3)
-end
-es(T_c) = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
-function rho_air(T, P, RH=1.0)
-    qsat = RH * 0.622 * es(T - 273.15) / P
-    Tv = T * (1.0 + 0.61 * qsat)
-    return P / c.Rd / Tv
-end
-wc0 = sum(water_vol.(r0s, r_drys, Nis)) / rho_air(T0, P0, 0.0)
+𝑉(r0, r_dry, Ni) = 
+    (4*π/3.0) * c.rho_w * Ni * (r0^3 - r_dry^3)
+wc0 = sum(𝑉.(r0s, r_drys, Nis)) / ρ_air(T0, P0, 0.0)
 wi0 = 0.0
 
 @printf "AEROSOL DISTRIBUTION\n"
@@ -108,24 +84,12 @@ append!(y0, r0s)
 accom = 1.0
 params = [r_drys, Nis, V, κ_aer, accom]
 
-function ka(T, r, rho)
-    ka_cont = 1e-3 * (4.39 + 0.071*T)
-    denom = 1.0 + (ka_cont / c.at / r / rho / c.Cp) * sqrt(2*π*c.Ma/c.R/T)
-    return ka_cont / denom
-end
-function dv(T, r, P, accom)
-    P_atm = P * 1.01325e-5
-    dv_cont = 1e-4 * (0.211 / P_atm) * ((T / 273.0)^1.94)
-    denom = 1.0 + (dv_cont / accom / r) * sqrt(2*π*c.Mw/c.R/T)
-    return dv_cont / denom
-end
-
-struct atm_state
-    T
-    P
-    ρ_air
-    wv
-    S
+struct atm_state{T}
+    T::T
+    P::T
+    ρ_air::T
+    wv::T
+    S::T
 end
 
 function calc_dr_dt(r, r_dry, κ, atm, accom=accom)
@@ -193,16 +157,11 @@ function pm_parcel_odes!(du,u,p,t)
 
   end
   dwc_dt *= (4*π * c.rho_w / ρ_air_dry)
-  # dwc_dt = sum(Nis.*(rs.^2).*drs_dt) * 4*π * c.rho_w / ρ_air_dry
 
   dwv_dt = -1. * dwc_dt
 
   dT_dt = -c.g * V / c.Cp - c.L * dwv_dt / c.Cp
 
-  # α = (c.g * c.Mw * c.L) / (c.Cp * c.R * atm.T^2)
-  # α -= (c.g * c.Ma) / (c.R * atm.T)
-  # γ = (atm.P * c.Ma) / (c.Mw * pv_sat)
-  # γ += (c.Mw * c.L * c.L) / (c.Cp * c.R * atm.T^2)
   α = (c.g * c.Mw * c.L) / (c.Cp * c.R * T * T)
   α -= (c.g * c.Ma) / (c.R * T)
   γ = (P * c.Ma) / (c.Mw * pv_sat)
@@ -213,12 +172,10 @@ function pm_parcel_odes!(du,u,p,t)
   du[2] = dT_dt
   du[3] = dwv_dt
   du[4] = dS_dt
-  # du[5:end] = drs_dt
 
 end
 
 ## Solver setup
-# state_atol = [1e-4, 1e-4, 1e-10, 1e-8]
 state_atol = [1e-4, 1e-4, 1e-10, 1e-8]
 append!(state_atol, 1e-12*ones(length(rs)))
 state_rtol = 1e-7
