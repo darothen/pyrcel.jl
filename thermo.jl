@@ -1,5 +1,7 @@
 using Optim: Optim
 
+include("constants.jl")
+
 es(T_c) = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
 
 @doc raw"""
