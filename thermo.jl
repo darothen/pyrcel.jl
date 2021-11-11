@@ -1,6 +1,17 @@
 using Optim: Optim
 
 es(T_c) = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
+
+@doc raw"""
+    σ_w(T)
+
+Compute the surface tension of water in J/m² for a given temperature in K. Uses
+the canonical formulation:
+
+```math
+\sigma_w = 0.0761 - 1.55\times 10^{-4}(T - 273.15)
+```
+"""
 σ_w(T) = 0.0761 - 1.55e-4 * (T - 273.15)
 
 function dv(T, r, P, accom)
