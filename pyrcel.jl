@@ -15,20 +15,20 @@ using Sundials
 
 ## Base model constants 
 V = 0.44
-T0 = 283.15
-S0 = -0.05
-P0 = 85000.0
+T₀ = 283.15
+S₀ = -0.05
+P₀ = 85000.0
 
 ## Create an initial aerosol distribution
-μ_aer = 0.15
-N_aer = 1000.0
-σ_aer = 1.2
-κ_aer = 0.54
+μₐ = 0.15
+Nₐ = 1000.0
+σₐ = 1.2
+κₐ = 0.54
 n_bins = 251
 
 ## Initialize aerosol size distribution
-lr = log(μ_aer / 10. / σ_aer)
-rr = log(μ_aer * 10. * σ_aer)
+lr = log(μₐ / 10. / σₐ)
+rr = log(μₐ * 10. * σₐ)
 
 base = ℯ
 rs = base.^(range(lr, stop=rr, length=n_bins))
@@ -36,8 +36,8 @@ mids = sqrt.(rs[1:end-1] .* rs[2:end])
 r_drys = mids * 1e-6
 
 function pdf(x)
-    scaling = N_aer / sqrt(2*π) / log(σ_aer)
-    exponent = log(x / μ_aer)^2 / 2 / log(σ_aer)^2
+    scaling = Nₐ / sqrt(2*π) / log(σₐ)
+    exponent = log(x / μₐ)^2 / 2 / log(σₐ)^2
     return (scaling / x) * exp(-exponent)
 end
 rsl = rs[1:end-1]
@@ -47,15 +47,15 @@ Nis = 0.5 * (rsr - rsl) .* (pdf.(rsl) + pdf.(rsr)) * 1e6
 ## Initialize parcel init conditions
 # Water vapor
 es(T_c) = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
-wv0 = (S0 + 1.0) * (
-    c.epsilon * es(T0 - 273.15) / (P0 - es(T0 - 273.15))
+wv₀ = (S₀ + 1.0) * (
+    c.epsilon * es(T₀ - 273.15) / (P₀ - es(T₀ - 273.15))
 )
 # Find equilibrium wet particle radius
 r0s = []
 # NOTE: κ is constant here so we don't need the zipped iteration
 for r_dry in reverse(r_drys)
-    f(r) = Seq(r, r_dry, T0, κ_aer) - S0
-    r_b, _ = kohler_crit(T0, r_dry, κ_aer)
+    f(r) = Seq(r, r_dry, T₀, κₐ) - S0
+    r_b, _ = kohler_crit(T₀, r_dry, κₐ)
     r_a = r_dry
     r0 = Roots.find_zero(f, (r_a, r_b), )
     # @printf "%g | %g | %g | %g \n" r_a r_dry r0 r_b
@@ -65,10 +65,10 @@ end
 r0s = collect(reverse(r0s))
 
 ## Total water volume
-𝑉(r0, r_dry, Ni) = 
-    (4*π/3.0) * c.rho_w * Ni * (r0^3 - r_dry^3)
-wc0 = sum(𝑉.(r0s, r_drys, Nis)) / ρ_air(T0, P0, 0.0)
-wi0 = 0.0
+𝑉(r, r_dry, Ni) = 
+    (4*π/3.0) * c.rho_w * Ni * (r^3 - r_dry^3)
+wc₀ = sum(𝑉.(r0s, r_drys, Nis)) / ρ_air(T₀, P₀, 0.0)
+wi₀ = 0.0
 
 @printf "AEROSOL DISTRIBUTION\n"
 for i = 1:length(r_drys)
@@ -77,13 +77,13 @@ end
 
 @printf "\nInitial Conditions\n"
 @printf "------------------\n"
-@printf "%9.1f %9.2f %9.1e %9.1e %9.1e %9.3f\n" P0/100. T0 wv0*1e3 wc0*1e3 wi0*1e3 S0
+@printf "%9.1f %9.2f %9.1e %9.1e %9.1e %9.3f\n" P₀/100. T₀ wv₀*1e3 wc₀*1e3 wi₀*1e3 S₀
 
 ## Set up ODE solver
-y0 = [P0, T0, wv0, S0]
-append!(y0, r0s)
+y₀ = [P₀, T₀, wv₀, S₀]
+append!(y₀, r0s)
 accom = 1.0
-params = [r_drys, Nis, V, κ_aer, accom]
+params = [r_drys, Nis, V, κₐ, accom]
 
 struct atm_state{T}
     T::T
