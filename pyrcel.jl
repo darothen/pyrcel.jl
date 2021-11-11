@@ -20,41 +20,66 @@ S₀ = -0.05
 P₀ = 85000.0
 
 ## Create an initial aerosol distribution
+
+abstract type SizeDistribution end
+
+struct LogNormal <: SizeDistribution
+    μ :: Real
+    σ :: Real
+    N :: Real
+    base :: Real
+    function LogNormal(μ::Real, σ::Real, N::Real; base::Real=ℯ)
+        @assert(μ > 0, "μ should be positive")
+        @assert(σ > 0, "σ should be positive")
+        @assert(N ≥ 0, "N should be 0 or positive")
+        new(μ, σ, N, base)
+    end
+end
+
+function Base.show(io::IO, dist::LogNormal)
+    print(io, "LogNormal(μ=", dist.μ, ", σ=", dist.σ, ", N=", dist.N, ", base=",
+          dist.base, ")")
+end
+
+function pdf(x::Real, dist::LogNormal)
+    scaling = dist.N / sqrt(2*π) / log(dist.base, dist.σ)
+    exponent = log(dist.base, x / dist.μ)^2 / 2 / log(dist.base, dist.σ)^2
+    return (scaling / x) * exp(-exponent)
+end
+
+# Bind a functor to our distributon so calling it passes through to the PDF func
+function (dist::LogNormal)(x::Real)
+    pdf(x, dist)
+end
+
+
 μₐ = 0.15
 Nₐ = 1000.0
 σₐ = 1.2
 κₐ = 0.54
 n_bins = 251
+dist = LogNormal(μₐ, σₐ, Nₐ, base=ℯ)
 
 ## Initialize aerosol size distribution
-lr = log(μₐ / 10. / σₐ)
-rr = log(μₐ * 10. * σₐ)
+lr = log(dist.μ / 10. / dist.σ)
+rr = log(dist.μ * 10. * dist.σ)
 
-base = ℯ
-rs = base.^(range(lr, stop=rr, length=n_bins))
+rs = (dist.base).^(range(lr, stop=rr, length=n_bins))
 mids = sqrt.(rs[1:end-1] .* rs[2:end])
 r_drys = mids * 1e-6
 
-function pdf(x)
-    scaling = Nₐ / sqrt(2*π) / log(σₐ)
-    exponent = log(x / μₐ)^2 / 2 / log(σₐ)^2
-    return (scaling / x) * exp(-exponent)
-end
 rsl = rs[1:end-1]
 rsr = rs[2:end]
-Nis = 0.5 * (rsr - rsl) .* (pdf.(rsl) + pdf.(rsr)) * 1e6
+Nis = 0.5 * (rsr - rsl) .* (pdf.(rsl, Ref(dist)) + pdf.(rsr, Ref(dist))) * 1e6
 
 ## Initialize parcel init conditions
 # Water vapor
-es(T_c) = 611.2 * exp(17.67 * T_c / (T_c + 243.5))
-wv₀ = (S₀ + 1.0) * (
-    c.epsilon * es(T₀ - 273.15) / (P₀ - es(T₀ - 273.15))
-)
+wv₀ = (S₀ + 1.0) * (c.epsilon * es(T₀ - 273.15) / (P₀ - es(T₀ - 273.15)))
 # Find equilibrium wet particle radius
 r0s = []
 # NOTE: κ is constant here so we don't need the zipped iteration
 for r_dry in reverse(r_drys)
-    f(r) = Seq(r, r_dry, T₀, κₐ) - S0
+    f(r) = Seq(r, r_dry, T₀, κₐ) - S₀
     r_b, _ = kohler_crit(T₀, r_dry, κₐ)
     r_a = r_dry
     r0 = Roots.find_zero(f, (r_a, r_b), )
@@ -85,7 +110,7 @@ append!(y₀, r0s)
 accom = 1.0
 params = [r_drys, Nis, V, κₐ, accom]
 
-struct atm_state{T}
+struct atm_state{T <: Real}
     T::T
     P::T
     ρ_air::T
@@ -186,12 +211,12 @@ output_dt = 1.0
 solver_dt = 0.5
 # n_out = convert(Integer, solver_dt / output_dt)
 
-prob = ODEProblem(pm_parcel_odes!,y0,tspan,params)
-u = y0
+prob = ODEProblem(pm_parcel_odes!, y₀, tspan, params)
+u = y₀
 p = params
 
 # Warm up ODE RHS
-pm_parcel_odes!(zeros(length(y0)), y0, params, 0.)
+pm_parcel_odes!(zeros(length(y₀)), y₀, params, 0.)
 
 ## One-shot solve
 @time sol = solve(
@@ -210,7 +235,7 @@ pm_parcel_odes!(zeros(length(y0)), y0, params, 0.)
     # KenCarp4(), # ~9 seconds
     # QNDF(), # ~12 seconds
     # QNDF1(), # ~26 seconds
-    QBDF(), # ~4-8 seconds - much faster on second run
+    # QBDF(), # ~4-8 seconds - much faster on second run
 
     ## USE THESE SETTINGS
     reltol=state_rtol,
